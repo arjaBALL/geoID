@@ -1,13 +1,14 @@
+// app/tabs/_layout.jsx
 import { FontAwesome6 } from "@react-native-vector-icons/fontawesome6";
 import { Stack } from "expo-router";
 import { Pressable, Text, View } from "react-native";
-import Home from "./pages/Home";
+import BottomNavbar from "../components/Navbar";
 
-export default function HomePage() {
+export default function TabsLayout() {
   return (
-    <>
-      <Stack.Screen
-        options={{
+    <View style={{ flex: 1, backgroundColor: "#0F1620" }}>
+      <Stack
+        screenOptions={{
           headerStyle: {
             backgroundColor: "#0F1620",
           },
@@ -85,7 +86,9 @@ export default function HomePage() {
         }}
       />
 
-      <Home />
-    </>
+      <View style={{ position: "absolute", bottom: 0, left: 0, right: 0 }}>
+        <BottomNavbar />
+      </View>
+    </View>
   );
 }

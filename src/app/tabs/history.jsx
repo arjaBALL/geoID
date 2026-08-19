@@ -1,9 +1,9 @@
 import { FontAwesome6 } from "@react-native-vector-icons/fontawesome6";
 import { Stack } from "expo-router";
 import { Pressable, Text, View } from "react-native";
-import Profile from "./pages/Profile";
+import History from "../pages/History";
 
-export default function ProfilePage() {
+export default function historyPage() {
   return (
     <>
       <Stack.Screen
@@ -85,7 +85,7 @@ export default function ProfilePage() {
         }}
       />
 
-      <Profile />
+      <History />
     </>
   );
 }

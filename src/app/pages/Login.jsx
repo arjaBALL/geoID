@@ -35,7 +35,7 @@ const Login = () => {
         <Button
           className="mt-8"
           title="Sign In"
-          onPress={() => router.replace("/home")}
+          onPress={() => router.replace("/tabs/home")}
         />
       </View>
     </View>
