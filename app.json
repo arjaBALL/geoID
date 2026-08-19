@@ -7,10 +7,8 @@
     "icon": "./assets/images/icon.png",
     "scheme": "stickersmash",
     "userInterfaceStyle": "automatic",
-    "newArchEnabled": true,
     "ios": {
-      "icon": "./assets/expo.icon",
-      "bundleIdentifier": "com.anonymous.StickerSmash"
+      "icon": "./assets/expo.icon"
     },
     "android": {
       "adaptiveIcon": {
