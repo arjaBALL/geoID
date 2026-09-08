@@ -1,10 +1,10 @@
 // app/main.jsx
 import { usePathname } from "expo-router";
 import { View } from "react-native";
-import BottomNavbar from "../app/components/Navbar";
-import History from "./pages/History";
-import Home from "./pages/Home";
-import Profile from "./pages/Profile";
+import BottomNavbar from "../_components/Navbar";
+import History from "../_pages/History";
+import Home from "../_pages/Home";
+import Profile from "../_pages/Profile";
 
 export default function Main() {
   const pathname = usePathname();

@@ -2,7 +2,7 @@ import { FontAwesome6 } from "@react-native-vector-icons/fontawesome6";
 import { Stack } from "expo-router";
 import { Pressable, Text, View } from "react-native";
 
-import Profile from "../pages/Profile";
+import Profile from "../../_pages/Profile";
 
 export default function ProfilePage() {
   return (

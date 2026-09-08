@@ -1,178 +1,21 @@
 import { FontAwesome6 } from "@react-native-vector-icons/fontawesome6";
-import { useMemo, useState } from "react";
-import { Alert, FlatList, Pressable, Share, Text, View } from "react-native";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  ActivityIndicator,
+  Alert,
+  FlatList,
+  Pressable,
+  RefreshControl,
+  Share,
+  Text,
+  View,
+} from "react-native";
+
+import { supabase } from "../_lib/supabase";
 
 // ======================================================
-// MOCK DATA
+// STATIC OPTIONS
 // ======================================================
-
-const MOCK_LOGS = [
-  {
-    id: "l1",
-    date: "2026-08-01",
-    time: "07:02 AM",
-    employee: "Ana Reyes",
-    geofence: "Geofence 1",
-    type: "Time In",
-  },
-  {
-    id: "l2",
-    date: "2026-08-01",
-    time: "04:05 PM",
-    employee: "Ana Reyes",
-    geofence: "Geofence 1",
-    type: "Time Out",
-  },
-  {
-    id: "l3",
-    date: "2026-08-01",
-    time: "06:58 AM",
-    employee: "Marco Cruz",
-    geofence: "Geofence 1",
-    type: "Time In",
-  },
-  {
-    id: "l4",
-    date: "2026-08-01",
-    time: "04:10 PM",
-    employee: "Marco Cruz",
-    geofence: "Geofence 1",
-    type: "Time Out",
-  },
-  {
-    id: "l5",
-    date: "2026-08-02",
-    time: "12:58 PM",
-    employee: "Liza Santos",
-    geofence: "Geofence 2",
-    type: "Time In",
-  },
-  {
-    id: "l6",
-    date: "2026-08-02",
-    time: "09:03 PM",
-    employee: "Liza Santos",
-    geofence: "Geofence 2",
-    type: "Time Out",
-  },
-  {
-    id: "l7",
-    date: "2026-08-05",
-    time: "07:10 AM",
-    employee: "Ana Reyes",
-    geofence: "Geofence 1",
-    type: "Time In",
-  },
-  {
-    id: "l8",
-    date: "2026-08-05",
-    time: "04:02 PM",
-    employee: "Ana Reyes",
-    geofence: "Geofence 1",
-    type: "Time Out",
-  },
-  {
-    id: "l9",
-    date: "2026-08-08",
-    time: "07:01 AM",
-    employee: "Kim Dela Torre",
-    geofence: "Geofence 3",
-    type: "Time In",
-  },
-  {
-    id: "l10",
-    date: "2026-08-08",
-    time: "03:59 PM",
-    employee: "Kim Dela Torre",
-    geofence: "Geofence 3",
-    type: "Time Out",
-  },
-  {
-    id: "l11",
-    date: "2026-08-12",
-    time: "07:05 AM",
-    employee: "Marco Cruz",
-    geofence: "Geofence 1",
-    type: "Time In",
-  },
-  {
-    id: "l12",
-    date: "2026-08-12",
-    time: "04:00 PM",
-    employee: "Marco Cruz",
-    geofence: "Geofence 1",
-    type: "Time Out",
-  },
-  {
-    id: "l13",
-    date: "2026-08-16",
-    time: "01:02 PM",
-    employee: "Liza Santos",
-    geofence: "Geofence 2",
-    type: "Time In",
-  },
-  {
-    id: "l14",
-    date: "2026-08-16",
-    time: "09:00 PM",
-    employee: "Liza Santos",
-    geofence: "Geofence 2",
-    type: "Time Out",
-  },
-  {
-    id: "l15",
-    date: "2026-08-19",
-    time: "06:55 AM",
-    employee: "Ana Reyes",
-    geofence: "Geofence 1",
-    type: "Time In",
-  },
-  {
-    id: "l16",
-    date: "2026-08-19",
-    time: "04:07 PM",
-    employee: "Ana Reyes",
-    geofence: "Geofence 1",
-    type: "Time Out",
-  },
-  {
-    id: "l17",
-    date: "2026-08-22",
-    time: "07:03 AM",
-    employee: "Kim Dela Torre",
-    geofence: "Geofence 3",
-    type: "Time In",
-  },
-  {
-    id: "l18",
-    date: "2026-08-22",
-    time: "04:01 PM",
-    employee: "Kim Dela Torre",
-    geofence: "Geofence 3",
-    type: "Time Out",
-  },
-  {
-    id: "l19",
-    date: "2026-08-27",
-    time: "07:00 AM",
-    employee: "Marco Cruz",
-    geofence: "Geofence 1",
-    type: "Time In",
-  },
-  {
-    id: "l20",
-    date: "2026-08-27",
-    time: "04:04 PM",
-    employee: "Marco Cruz",
-    geofence: "Geofence 1",
-    type: "Time Out",
-  },
-];
-
-const GEOFENCE_OPTIONS = [
-  "All Geofences",
-  ...Array.from(new Set(MOCK_LOGS.map((l) => l.geofence))),
-];
 
 const PERIODS = [
   { id: "month", label: "Whole Month" },
@@ -214,6 +57,13 @@ function formatDay(dateStr) {
   });
 }
 
+function formatTime(dateObj) {
+  return dateObj.toLocaleTimeString(undefined, {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function toCSV(rows) {
   const header = ["Date", "Time", "Employee", "Geofence", "Type"];
 
@@ -226,6 +76,47 @@ function toCSV(rows) {
   return [header.join(","), ...lines].join("\n");
 }
 
+// Raw device-style export: biometric_no <tab> punch_time <tab> status <tab> check_type <tab> verify_mode <tab> work_code
+// Matches the .dat format the biometric device itself produces (e.g. AF6P200760015_attlog.dat)
+function toRawAttlog(rows) {
+  return rows
+    .map((r) => {
+      const checkType = r.type === "Time In" ? 0 : 1;
+      // r.rawPunchTime is the original "YYYY-MM-DD HH:MM:SS" from the DB row
+      return [
+        r.biometricNo,
+        r.rawPunchTime,
+        r.status ?? 1,
+        checkType,
+        r.verifyMode ?? 1,
+        r.workCode ?? 0,
+      ].join("\t");
+    })
+    .join("\r\n");
+}
+
+// Maps a raw_logs row + looked-up name/geofence into the shape the UI uses
+function mapRawLog(row, nameByBiometricNo, geofenceByBiometricNo) {
+  const punchDate = new Date(row.punch_time);
+
+  return {
+    id: String(row.log_id),
+    date: punchDate.toISOString().slice(0, 10),
+    time: formatTime(punchDate),
+    employee:
+      nameByBiometricNo.get(row.biometric_no) ??
+      `Biometric #${row.biometric_no}`,
+    geofence: geofenceByBiometricNo.get(row.biometric_no) ?? "Unassigned",
+    type: row.check_type === 0 ? "Time In" : "Time Out",
+    // Raw fields kept around for the device-format (.dat) export
+    biometricNo: row.biometric_no,
+    rawPunchTime: row.punch_time,
+    status: row.status,
+    verifyMode: row.verify_mode,
+    workCode: row.work_code,
+  };
+}
+
 // ======================================================
 // SCREEN
 // ======================================================
@@ -234,6 +125,12 @@ export default function Logs() {
   const [cursor, setCursor] = useState(new Date(2026, 7, 1));
   const [geofence, setGeofence] = useState("All Geofences");
   const [period, setPeriod] = useState("month");
+
+  const [logs, setLogs] = useState([]);
+  const [geofenceOptions, setGeofenceOptions] = useState(["All Geofences"]);
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState(null);
 
   const year = cursor.getFullYear();
   const monthIndex = cursor.getMonth();
@@ -252,29 +149,173 @@ export default function Logs() {
   };
 
   // ====================================================
-  // FILTER
+  // FETCH RAW LOGS FOR THE SELECTED MONTH
+  // ====================================================
+
+  const fetchLogs = useCallback(
+    async ({ silent = false } = {}) => {
+      try {
+        if (!silent) setLoading(true);
+        setError(null);
+
+        const monthStart = new Date(year, monthIndex, 1);
+        const monthEnd = new Date(year, monthIndex + 1, 1); // exclusive
+
+        const PAGE_SIZE = 1000;
+        let rows = [];
+        let from = 0;
+
+        while (true) {
+          const { data, error: rawError } = await supabase
+            .from("raw_logs")
+            .select(
+              "log_id, biometric_no, punch_time, status, check_type, verify_mode, work_code",
+            )
+            .gte("punch_time", monthStart.toISOString())
+            .lt("punch_time", monthEnd.toISOString())
+            .order("punch_time", { ascending: true })
+            .range(from, from + PAGE_SIZE - 1);
+
+          if (rawError) throw rawError;
+          rows = rows.concat(data ?? []);
+          if (!data || data.length < PAGE_SIZE) break;
+          from += PAGE_SIZE;
+        }
+
+        const biometricNos = Array.from(
+          new Set(rows.map((r) => r.biometric_no)),
+        );
+
+        let nameByBiometricNo = new Map();
+        let geofenceByBiometricNo = new Map();
+
+        if (biometricNos.length > 0) {
+          // 2) Employee names for those biometric numbers
+          // NOTE: users.biometric_no should be integer to match raw_logs.
+          const { data: userRows, error: userError } = await supabase
+            .from("users")
+            .select("id, biometric_no, first_name, last_name")
+            .in("biometric_no", biometricNos);
+
+          if (userError) throw userError;
+
+          const userIdByBiometricNo = new Map();
+
+          (userRows ?? []).forEach((u) => {
+            const name = [u.first_name, u.last_name]
+              .filter(Boolean)
+              .join(" ")
+              .trim();
+
+            nameByBiometricNo.set(u.biometric_no, name || `User #${u.id}`);
+            userIdByBiometricNo.set(u.biometric_no, u.id);
+          });
+
+          const userIds = Array.from(userIdByBiometricNo.values());
+
+          if (userIds.length > 0) {
+            // 3) Geofence assignment per employee (first assignment used if multiple)
+            const { data: assignmentRows, error: assignmentError } =
+              await supabase
+                .from("geofence_employees")
+                .select("user_id, geofences ( name )")
+                .in("user_id", userIds);
+
+            if (assignmentError) throw assignmentError;
+
+            const geofenceByUserId = new Map();
+
+            (assignmentRows ?? []).forEach((a) => {
+              if (!geofenceByUserId.has(a.user_id)) {
+                geofenceByUserId.set(a.user_id, a.geofences?.name ?? null);
+              }
+            });
+
+            biometricNos.forEach((bn) => {
+              const uid = userIdByBiometricNo.get(bn);
+              const gName = uid != null ? geofenceByUserId.get(uid) : null;
+
+              if (gName) geofenceByBiometricNo.set(bn, gName);
+            });
+          }
+        }
+
+        const mapped = rows.map((row) =>
+          mapRawLog(row, nameByBiometricNo, geofenceByBiometricNo),
+        );
+
+        setLogs(mapped);
+
+        // Build geofence filter chips from what's actually in this month's data
+        const uniqueGeofences = Array.from(
+          new Set(mapped.map((l) => l.geofence)),
+        );
+
+        setGeofenceOptions(["All Geofences", ...uniqueGeofences]);
+      } catch (err) {
+        setError(err?.message ?? "Failed to load attendance logs.");
+        setLogs([]);
+      } finally {
+        setLoading(false);
+        setRefreshing(false);
+      }
+    },
+    [year, monthIndex],
+  );
+
+  useEffect(() => {
+    fetchLogs();
+  }, [fetchLogs]);
+
+  const handleRefresh = () => {
+    setRefreshing(true);
+    fetchLogs({ silent: true });
+  };
+
+  // ====================================================
+  // OPTIONAL: live updates when a new punch comes in
+  // ====================================================
+
+  useEffect(() => {
+    const channel = supabase
+      .channel("raw_logs_changes")
+      .on(
+        "postgres_changes",
+        { event: "INSERT", schema: "public", table: "raw_logs" },
+        () => {
+          // Re-fetch quietly so the list stays current without a full spinner
+          fetchLogs({ silent: true });
+        },
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [fetchLogs]);
+
+  // ====================================================
+  // FILTER (client-side, within the fetched month)
   // ====================================================
 
   const filteredLogs = useMemo(() => {
     const [start, end] = periodRange(year, monthIndex, period);
 
-    return MOCK_LOGS.filter((log) => {
-      const d = new Date(`${log.date}T00:00:00`);
+    return logs
+      .filter((log) => {
+        const d = new Date(`${log.date}T00:00:00`);
+        const dayNum = d.getDate();
+        const inRange = dayNum >= start && dayNum <= end;
 
-      const sameMonth = d.getFullYear() === year && d.getMonth() === monthIndex;
+        const matchesGeofence =
+          geofence === "All Geofences" || log.geofence === geofence;
 
-      const dayNum = d.getDate();
-
-      const inRange = dayNum >= start && dayNum <= end;
-
-      const matchesGeofence =
-        geofence === "All Geofences" || log.geofence === geofence;
-
-      return sameMonth && inRange && matchesGeofence;
-    }).sort(
-      (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
-    );
-  }, [year, monthIndex, period, geofence]);
+        return inRange && matchesGeofence;
+      })
+      .sort(
+        (a, b) => a.date.localeCompare(b.date) || a.time.localeCompare(b.time),
+      );
+  }, [logs, year, monthIndex, period, geofence]);
 
   const periodLabel =
     PERIODS.find((p) => p.id === period)?.label ?? "Whole Month";
@@ -297,27 +338,37 @@ export default function Logs() {
   // DOWNLOAD
   // ====================================================
 
-  const handleDownload = async () => {
+  const shareContent = async (content, filename) => {
+    try {
+      await Share.share({
+        title: filename,
+        message: content,
+      });
+    } catch (err) {
+      Alert.alert("Download failed", err?.message ?? "Please try again.");
+    }
+  };
+
+  const handleDownload = () => {
     if (filteredLogs.length === 0) {
       Alert.alert("Nothing to download", "No logs match the current filter.");
       return;
     }
 
-    const csv = toCSV(filteredLogs);
+    const stamp = `${year}-${String(monthIndex + 1).padStart(2, "0")}_${period}`;
 
-    const filename = `logs_${year}-${String(monthIndex + 1).padStart(
-      2,
-      "0",
-    )}_${period}.csv`;
-
-    try {
-      await Share.share({
-        title: filename,
-        message: csv,
-      });
-    } catch (err) {
-      Alert.alert("Download failed", err?.message ?? "Please try again.");
-    }
+    Alert.alert("Download logs", "Choose a format", [
+      {
+        text: "Raw (.dat, device format)",
+        onPress: () =>
+          shareContent(toRawAttlog(filteredLogs), `attlog_${stamp}.dat`),
+      },
+      {
+        text: "CSV (readable)",
+        onPress: () => shareContent(toCSV(filteredLogs), `logs_${stamp}.csv`),
+      },
+      { text: "Cancel", style: "cancel" },
+    ]);
   };
 
   // ====================================================
@@ -325,7 +376,7 @@ export default function Logs() {
   // ====================================================
 
   return (
-    <View className="flex-1 bg-[#0B111A]">
+    <View className="flex-1 bg-[#0B111A] mt-10">
       {/* =================================================
           HEADER
       ================================================= */}
@@ -503,7 +554,7 @@ export default function Logs() {
 
         <FlatList
           horizontal
-          data={GEOFENCE_OPTIONS}
+          data={geofenceOptions}
           keyExtractor={(item) => item}
           showsHorizontalScrollIndicator={false}
           contentContainerStyle={{ gap: 8 }}
@@ -581,7 +632,42 @@ export default function Logs() {
           </View>
         </View>
 
-        {filteredLogs.length === 0 ? (
+        {loading ? (
+          <View className="flex-1 items-center justify-center px-5 pb-20">
+            <ActivityIndicator size="small" color="#38BDF8" />
+
+            <Text className="mt-3 font-inter-light text-xs text-slate-500">
+              Loading attendance logs…
+            </Text>
+          </View>
+        ) : error ? (
+          <View className="flex-1 items-center justify-center px-5 pb-20">
+            <View className="h-16 w-16 items-center justify-center rounded-2xl bg-rose-400/10">
+              <FontAwesome6
+                name="triangle-exclamation"
+                size={22}
+                color="#FB7185"
+                iconStyle="solid"
+              />
+            </View>
+
+            <Text className="mt-4 font-outfit-semibold text-base text-white">
+              Couldn't load logs
+            </Text>
+
+            <Text className="mt-1 text-center font-inter-light text-xs leading-5 text-slate-500">
+              {error}
+            </Text>
+
+            <Pressable
+              onPress={() => fetchLogs()}
+              className="mt-4 rounded-full border border-sky-400/30 bg-sky-400/10 px-4 py-2">
+              <Text className="font-outfit-medium text-xs text-sky-400">
+                Try again
+              </Text>
+            </Pressable>
+          </View>
+        ) : filteredLogs.length === 0 ? (
           <View className="flex-1 items-center justify-center px-5 pb-20">
             <View className="h-16 w-16 items-center justify-center rounded-2xl bg-white/[0.04]">
               <FontAwesome6
@@ -605,6 +691,13 @@ export default function Logs() {
             data={filteredLogs}
             keyExtractor={(item) => item.id}
             showsVerticalScrollIndicator={false}
+            refreshControl={
+              <RefreshControl
+                refreshing={refreshing}
+                onRefresh={handleRefresh}
+                tintColor="#38BDF8"
+              />
+            }
             contentContainerStyle={{
               paddingHorizontal: 20,
               paddingBottom: 120,

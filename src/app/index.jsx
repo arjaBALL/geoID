@@ -1,5 +1,5 @@
 import { KeyboardAvoidingView, Platform, ScrollView, View } from "react-native";
-import Login from "./pages/Login";
+import Login from "../_pages/Login";
 
 export default function Index() {
   return (

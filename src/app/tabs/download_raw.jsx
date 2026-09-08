@@ -1,7 +1,7 @@
 import { FontAwesome6 } from "@react-native-vector-icons/fontawesome6";
 import { Stack } from "expo-router";
 import { Text, View } from "react-native";
-import Logs from "../pages/Download_raw";
+import Logs from "../../_pages/Download_raw";
 
 export default function LogsPage() {
   return (
