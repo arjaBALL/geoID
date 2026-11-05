@@ -66,6 +66,58 @@ function distanceMeters(a, b) {
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+const EARLY_MIN = 30; // minutes before an IN time that punching opens
+
+function toMinutes(t) {
+  if (!t) return null;
+  const [h, m] = t.split(":").map(Number);
+  return h * 60 + m;
+}
+
+function minutesOfDay(date) {
+  return date.getHours() * 60 + date.getMinutes();
+}
+
+// 540 -> { time: "09:00", period: "AM" }
+function formatMinutes(min) {
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return {
+    time: `${String(h % 12 || 12).padStart(2, "0")}:${String(m).padStart(2, "0")}`,
+    period: h >= 12 ? "PM" : "AM",
+  };
+}
+
+function getSlotWindows(g) {
+  const amIn = toMinutes(g?.am_in);
+  const amOut = toMinutes(g?.am_out);
+  const pmIn = toMinutes(g?.pm_in);
+  const pmOut = toMinutes(g?.pm_out);
+
+  if ([amIn, amOut, pmIn, pmOut].some((v) => v == null)) return null;
+
+  const pmInOpen = Math.max(amOut, pmIn - EARLY_MIN);
+
+  return [
+    {
+      key: "amIn",
+      label: "AM In",
+      checkType: 0,
+      start: Math.max(0, amIn - EARLY_MIN),
+      end: amOut,
+    },
+    {
+      key: "amOut",
+      label: "AM Out",
+      checkType: 1,
+      start: amOut,
+      end: pmInOpen,
+    },
+    { key: "pmIn", label: "PM In", checkType: 0, start: pmInOpen, end: pmOut },
+    { key: "pmOut", label: "PM Out", checkType: 1, start: pmOut, end: 24 * 60 },
+  ];
+}
+
 function MenuItem({ icon, label, onPress, danger }) {
   return (
     <Pressable
@@ -147,50 +199,54 @@ export default function Home() {
   }, [fetchBiometricNo]);
 
   /* =======================================================
-     LAST PUNCH STATUS (IN / OUT) — prevents duplicate punches
-  ======================================================= */
+   TODAY'S PUNCHES
+======================================================= */
 
-  // null = unknown yet, 0 = currently punched IN, 1 = currently punched OUT
-  const [lastCheckType, setLastCheckType] = useState(null);
-  const [lastCheckLoading, setLastCheckLoading] = useState(true);
-  const [lastCheckError, setLastCheckError] = useState(null);
-  const [punching, setPunching] = useState(false); // guards against double-taps
+  const [todayLogs, setTodayLogs] = useState([]);
+  const [todayLoading, setTodayLoading] = useState(true);
+  const [todayError, setTodayError] = useState(null);
+  const [punching, setPunching] = useState(false);
 
-  const fetchLastCheckType = useCallback(async () => {
+  // Ticks every 30s so the button opens/closes on time
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const id = setInterval(() => setNow(new Date()), 30000);
+    return () => clearInterval(id);
+  }, []);
+
+  const fetchTodayLogs = useCallback(async () => {
     if (!biometricNo) {
-      setLastCheckLoading(false);
+      setTodayLoading(false);
       return;
     }
 
     try {
-      setLastCheckLoading(true);
-      setLastCheckError(null);
+      setTodayLoading(true);
+      setTodayError(null);
+
+      const startOfDay = new Date();
+      startOfDay.setHours(0, 0, 0, 0);
 
       const { data, error } = await supabase
         .from("raw_logs")
-        .select("check_type")
+        .select("check_type, punch_time")
         .eq("biometric_no", biometricNo)
-        .order("punch_time", { ascending: false })
-        .limit(1)
-        .maybeSingle();
+        .gte("punch_time", startOfDay.toISOString())
+        .order("punch_time", { ascending: true });
 
       if (error) throw error;
 
-      // No prior log at all means the employee has never punched in,
-      // so treat them as "OUT" (eligible to punch IN next).
-      setLastCheckType(data?.check_type ?? 1);
+      setTodayLogs(data ?? []);
     } catch (err) {
-      setLastCheckError(err?.message ?? "Failed to load punch status.");
+      setTodayError(err?.message ?? "Failed to load today's punches.");
     } finally {
-      setLastCheckLoading(false);
+      setTodayLoading(false);
     }
   }, [biometricNo]);
 
   useEffect(() => {
-    fetchLastCheckType();
-  }, [fetchLastCheckType]);
-
-  const isPunchedIn = lastCheckType === 0;
+    fetchTodayLogs();
+  }, [fetchTodayLogs]);
 
   /* =======================================================
      GEOFENCES ASSIGNED TO THIS EMPLOYEE
@@ -208,7 +264,7 @@ export default function Home() {
       // TESTING MODE: no auth — just pull every active geofence
       const { data, error } = await supabase
         .from("geofences")
-        .select("id, name, points, is_active")
+        .select("id, name, points, is_active, am_in, am_out, pm_in, pm_out")
         .eq("is_active", true);
 
       if (error) throw error;
@@ -320,11 +376,63 @@ export default function Home() {
   }, [coords, geofences]);
 
   /* =======================================================
+   SCHEDULE / CURRENT PUNCH SLOT
+======================================================= */
+
+  const slotInfo = useMemo(() => {
+    const windows = getSlotWindows(status.geofence);
+    if (!windows) {
+      const last = todayLogs[todayLogs.length - 1];
+      const checkType = last?.check_type === 0 ? 1 : 0; // last was IN -> next is OUT
+      return {
+        state: "open",
+        slot: {
+          key: "free",
+          label: checkType === 0 ? "Punch In" : "Punch Out",
+          checkType,
+        },
+      };
+    }
+
+    const nowMin = minutesOfDay(now);
+    const current = windows.find((w) => nowMin >= w.start && nowMin < w.end);
+
+    // Before the first window of the day
+    if (!current) {
+      return { state: "waiting", next: windows.find((w) => w.start > nowMin) };
+    }
+
+    const done = todayLogs.some((l) => {
+      const t = minutesOfDay(new Date(l.punch_time));
+      return (
+        l.check_type === current.checkType &&
+        t >= current.start &&
+        t < current.end
+      );
+    });
+
+    return {
+      state: done ? "done" : "open",
+      slot: current,
+      next: windows.find((w) => w.start >= current.end),
+    };
+  }, [status.geofence, todayLogs, now]);
+
+  // Schedule shown in the "Today's attendance" cards
+  const shownSchedule = status.geofence ?? status.nearest;
+  const schedIn = shownSchedule?.am_in
+    ? formatMinutes(toMinutes(shownSchedule.am_in))
+    : null;
+  const schedOut = shownSchedule?.pm_out
+    ? formatMinutes(toMinutes(shownSchedule.pm_out))
+    : null;
+
+  /* =======================================================
      PUNCH ELIGIBILITY
   ======================================================= */
 
   const isBusy =
-    locationLoading || geofencesLoading || biometricLoading || lastCheckLoading;
+    locationLoading || geofencesLoading || biometricLoading || todayLoading;
 
   const blockReason = locationError
     ? locationError
@@ -332,17 +440,28 @@ export default function Home() {
       ? geofencesError
       : biometricError
         ? biometricError
-        : lastCheckError
-          ? lastCheckError
+        : todayError
+          ? todayError
           : geofences.length === 0
             ? "You're not assigned to any geofence yet."
             : !status.inside
               ? "You're outside your assigned attendance area."
-              : null;
+              : slotInfo.state === "waiting"
+                ? `${slotInfo.next.label} opens at ${formatMinutes(slotInfo.next.start).time} ${formatMinutes(slotInfo.next.start).period}.`
+                : slotInfo.state === "done"
+                  ? `${slotInfo.slot.label} already recorded.${
+                      slotInfo.next
+                        ? ` Next: ${slotInfo.next.label} at ${formatMinutes(slotInfo.next.start).time} ${formatMinutes(slotInfo.next.start).period}.`
+                        : " You're done for today."
+                    }`
+                  : null;
 
-  // Blocked entirely while a punch request is in flight — this is what
-  // stops a double-tap (or slow network) from firing two inserts in a row.
-  const canPunch = !isBusy && !blockReason && !!biometricNo && !punching;
+  const canPunch =
+    !isBusy &&
+    !blockReason &&
+    !!biometricNo &&
+    !punching &&
+    slotInfo.state === "open";
 
   /* =======================================================
      PULSE ANIMATION (only runs while eligible)
@@ -404,45 +523,37 @@ export default function Home() {
 
   const handlePunch = async () => {
     if (!canPunch) {
-      // If the button was tappable a moment ago and this fires anyway
-      // (e.g. a second tap landed while the first request was in flight),
-      // punching is the reason — everything else already disables the button.
       if (punching) return;
-
       Alert.alert(
-        "Can't Punch In",
+        "Can't Punch",
         blockReason ?? "You need to be inside your assigned area.",
       );
       return;
     }
 
-    // Lock the button immediately so a fast double-tap can't slip a second
-    // insert through before this request finishes.
     setPunching(true);
 
     try {
-      const nextCheckType = isPunchedIn ? 1 : 0; // 0=IN, 1=OUT — flips current state
+      const slot = slotInfo.slot;
+      const punchTime = new Date().toISOString();
 
       const { error } = await supabase.from("raw_logs").insert({
         biometric_no: biometricNo,
-        punch_time: new Date().toISOString(),
+        punch_time: punchTime,
         status: 1,
-        check_type: nextCheckType,
+        check_type: slot.checkType, // 0=IN, 1=OUT, fixed by the schedule slot
         verify_mode: 1,
         work_code: 0,
       });
 
       if (error) throw error;
 
-      // Update local status immediately — no need to re-fetch, and this
-      // is what actually prevents "punch IN" from being tappable twice
-      // in a row: the button now reflects "currently IN" right away.
-      setLastCheckType(nextCheckType);
+      setTodayLogs((prev) => [
+        ...prev,
+        { check_type: slot.checkType, punch_time: punchTime },
+      ]);
 
-      Alert.alert(
-        "Success",
-        nextCheckType === 0 ? "Punched in!" : "Punched out!",
-      );
+      Alert.alert("Success", `${slot.label} recorded!`);
     } catch (err) {
       Alert.alert("Error", err?.message ?? "Failed to record punch.");
     } finally {
@@ -684,10 +795,10 @@ export default function Home() {
               </Text>
 
               <Text className="mt-1 font-outfit-bold text-[26px] text-white">
-                08:00
+                {schedIn?.time ?? "--:--"}
                 <Text className="font-outfit-medium text-sm text-slate-400">
                   {" "}
-                  AM
+                  {schedIn?.period ?? ""}
                 </Text>
               </Text>
 
@@ -723,10 +834,10 @@ export default function Home() {
               </Text>
 
               <Text className="mt-1 font-outfit-bold text-[24px] text-white">
-                05:00
+                {schedOut?.time ?? "--:--"}
                 <Text className="font-outfit-medium text-sm text-slate-400">
                   {" "}
-                  PM
+                  {schedOut?.period ?? ""}
                 </Text>
               </Text>
 
@@ -753,10 +864,8 @@ export default function Home() {
           {punching
             ? "Recording…"
             : canPunch
-              ? isPunchedIn
-                ? "Ready to check out?"
-                : "Ready to check in?"
-              : "Not in range"}
+              ? `Ready for ${slotInfo.slot.label}?`
+              : "Punch unavailable"}
         </Text>
 
         <Text className="mt-1 text-center font-inter-light text-xs leading-5 text-slate-500">
@@ -833,8 +942,8 @@ export default function Home() {
             className="ml-2 font-outfit-medium text-xs"
             style={{ color: canPunch ? "#94A3B8" : "#F87171" }}>
             {canPunch
-              ? "Tap fingerprint to punch in"
-              : "Punch in disabled until you're inside your area"}
+              ? `Tap fingerprint for ${slotInfo.slot.label}`
+              : "Punch disabled right now"}
           </Text>
         </View>
       </View>

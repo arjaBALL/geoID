@@ -60,11 +60,18 @@
           "locationAlwaysAndWhenInUsePermission": "Allow this app to use your location."
         }
       ],
-      "expo-image"
+      "expo-image",
+      "@react-native-community/datetimepicker"
     ],
     "experiments": {
       "typedRoutes": true,
       "reactCompiler": true
+    },
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "b3ef16e9-1707-437f-abe1-5bb3adcb6450"
+      }
     }
   }
 }

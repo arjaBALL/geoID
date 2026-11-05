@@ -84,6 +84,43 @@ function initialsFor(name) {
     .join("");
 }
 
+function formatTimeInput(text) {
+  const d = text.replace(/\D/g, "").slice(0, 4);
+  return d.length > 2 ? `${d.slice(0, 2)}:${d.slice(2)}` : d;
+}
+
+function toTime24(value, period, noonOk = false) {
+  const m = value.match(/^(\d{1,2}):(\d{2})$/);
+  if (!m) return null;
+
+  let h = Number(m[1]);
+  const min = Number(m[2]);
+
+  if (h < 1 || h > 12 || min > 59) return null;
+
+  if (period === "AM") {
+    if (h === 12 && !noonOk) h = 0;
+  } else {
+    if (h !== 12) h += 12;
+  }
+
+  return `${String(h).padStart(2, "0")}:${String(min).padStart(2, "0")}:00`;
+}
+
+function fromTime24(value) {
+  if (!value) return "";
+
+  const [h, m] = value.split(":").map(Number);
+
+  return `${String(h % 12 || 12).padStart(2, "0")}:${String(m).padStart(2, "0")}`;
+}
+
+function formatSchedule(s) {
+  if (!s?.amIn) return null;
+
+  return `${fromTime24(s.amIn)} AM – ${fromTime24(s.amOut)} • ${fromTime24(s.pmIn)} – ${fromTime24(s.pmOut)} PM`;
+}
+
 /* =========================================================
    MAIN COMPONENT
 ========================================================= */
@@ -143,6 +180,15 @@ export default function GeoLocation() {
   const [employeesLoading, setEmployeesLoading] = useState(true);
   const [employeesError, setEmployeesError] = useState(null);
 
+  const [showScheduleModal, setShowScheduleModal] = useState(false);
+  const [scheduleGeofenceId, setScheduleGeofenceId] = useState(null);
+  const [schedule, setSchedule] = useState({
+    amIn: "",
+    amOut: "",
+    pmIn: "",
+    pmOut: "",
+  });
+
   useEffect(() => {
     fetchEmployees();
   }, []);
@@ -156,13 +202,13 @@ export default function GeoLocation() {
         .from("users")
         .select(
           `
-          id,
-          first_name,
-          last_name,
-          is_active,
-          roles ( name ),
-          sections ( section_name )
-        `,
+    id,
+    first_name,
+    last_name,
+    is_active,
+    roles ( name ),
+    sections ( section_name )
+  `,
         )
         .eq("is_active", true)
         .order("first_name", { ascending: true });
@@ -194,13 +240,14 @@ export default function GeoLocation() {
         .from("geofences")
         .select(
           `
-        id,
-        name,
-        points,
-        area_m2,
-        created_at,
-        geofence_employees ( user_id )
-      `,
+    id,
+    name,
+    points,
+    area_m2,
+    created_at,
+    am_in, am_out, pm_in, pm_out,
+    geofence_employees ( user_id )
+  `,
         )
         .eq("is_active", true)
         .order("created_at", { ascending: false });
@@ -213,6 +260,12 @@ export default function GeoLocation() {
         points: g.points,
         area: g.area_m2,
         createdAt: new Date(g.created_at),
+        schedule: {
+          amIn: g.am_in,
+          amOut: g.am_out,
+          pmIn: g.pm_in,
+          pmOut: g.pm_out,
+        },
         employeeIds: (g.geofence_employees ?? []).map((e) => String(e.user_id)),
       }));
 
@@ -245,6 +298,7 @@ export default function GeoLocation() {
         points: data.points,
         area: data.area_m2,
         createdAt: new Date(data.created_at),
+        schedule: { amIn: null, amOut: null, pmIn: null, pmOut: null },
         employeeIds: [],
       };
 
@@ -254,9 +308,72 @@ export default function GeoLocation() {
       setShowList(true);
       setDrawMode(false);
 
-      setTimeout(() => openEmployeeModal(newEntry), 250);
+      setTimeout(() => openScheduleModal(newEntry), 250); // was openEmployeeModal
     } catch (err) {
       Alert.alert("Error", err?.message ?? "Failed to save geofence.");
+    }
+  };
+
+  const openScheduleModal = (geofence) => {
+    setScheduleGeofenceId(geofence.id);
+    setSchedule({
+      amIn: fromTime24(geofence.schedule?.amIn),
+      amOut: fromTime24(geofence.schedule?.amOut),
+      pmIn: fromTime24(geofence.schedule?.pmIn),
+      pmOut: fromTime24(geofence.schedule?.pmOut),
+    });
+    setShowScheduleModal(true);
+  };
+
+  const skipSchedule = () => {
+    setShowScheduleModal(false);
+    const g = savedGeofences.find((x) => x.id === scheduleGeofenceId);
+    if (g) setTimeout(() => openEmployeeModal(g), 250);
+  };
+
+  const confirmSchedule = async () => {
+    const amIn = toTime24(schedule.amIn, "AM");
+    const amOut = toTime24(schedule.amOut, "AM", true);
+    const pmIn = toTime24(schedule.pmIn, "PM");
+    const pmOut = toTime24(schedule.pmOut, "PM");
+
+    if (!amIn || !amOut || !pmIn || !pmOut) {
+      Alert.alert(
+        "Invalid Time",
+        "Please enter all times as HH:MM (e.g. 08:00).",
+      );
+      return;
+    }
+
+    if (!(amIn < amOut && amOut <= pmIn && pmIn < pmOut)) {
+      Alert.alert(
+        "Invalid Schedule",
+        "Times must be in order: AM In → AM Out → PM In → PM Out.",
+      );
+      return;
+    }
+
+    try {
+      const { error } = await supabase
+        .from("geofences")
+        .update({ am_in: amIn, am_out: amOut, pm_in: pmIn, pm_out: pmOut })
+        .eq("id", scheduleGeofenceId);
+
+      if (error) throw error;
+
+      setSavedGeofences((prev) =>
+        prev.map((g) =>
+          g.id === scheduleGeofenceId
+            ? { ...g, schedule: { amIn, amOut, pmIn, pmOut } }
+            : g,
+        ),
+      );
+
+      setShowScheduleModal(false);
+      const g = savedGeofences.find((x) => x.id === scheduleGeofenceId);
+      if (g) setTimeout(() => openEmployeeModal(g), 250);
+    } catch (err) {
+      Alert.alert("Error", err?.message ?? "Failed to save schedule.");
     }
   };
 
@@ -1070,7 +1187,28 @@ export default function GeoLocation() {
                             {" • "}
                             {formatArea(item.area)}
                           </Text>
+
+                          {formatSchedule(item.schedule) && (
+                            <Text className="mt-0.5 text-[10px] text-blue-400/80">
+                              {formatSchedule(item.schedule)}
+                            </Text>
+                          )}
                         </View>
+
+                        <Pressable
+                          onPress={(e) => {
+                            e.stopPropagation?.();
+                            openScheduleModal(item);
+                          }}
+                          hitSlop={8}
+                          className="mr-2 h-8 w-8 items-center justify-center rounded-lg bg-white/5">
+                          <FontAwesome6
+                            name="clock"
+                            size={10}
+                            color="#9CA3AF"
+                            iconStyle="solid"
+                          />
+                        </Pressable>
 
                         {/* Staff */}
 
@@ -1236,6 +1374,105 @@ export default function GeoLocation() {
 
                 <Text className="ml-2 text-xs font-bold text-white">
                   Save Geofence
+                </Text>
+              </Pressable>
+            </View>
+          </View>
+        </View>
+      </Modal>
+
+      {/* SCHEDULE MODAL */}
+      <Modal
+        visible={showScheduleModal}
+        transparent
+        animationType="fade"
+        onRequestClose={() => setShowScheduleModal(false)}>
+        <View className="flex-1 items-center justify-center bg-black/70 px-6">
+          <View className="w-full overflow-hidden rounded-3xl border border-white/10 bg-[#141B26]">
+            {/* Header */}
+            <View className="flex-row items-center border-b border-white/10 px-5 py-5">
+              <View className="h-10 w-10 items-center justify-center rounded-xl bg-blue-500/15">
+                <FontAwesome6
+                  name="clock"
+                  size={15}
+                  color="#60A5FA"
+                  iconStyle="solid"
+                />
+              </View>
+              <View className="ml-3 flex-1">
+                <Text className="text-sm font-bold text-white">
+                  Time Schedule
+                </Text>
+                <Text className="mt-1 text-[10px] text-gray-500">
+                  Set the in and out times (HH:MM)
+                </Text>
+              </View>
+            </View>
+
+            {/* Body */}
+            <View className="px-5 py-5">
+              {[
+                [
+                  { key: "amIn", label: "AM In", badge: "AM" },
+                  { key: "amOut", label: "AM Out", badge: "AM" },
+                ],
+                [
+                  { key: "pmIn", label: "PM In", badge: "PM" },
+                  { key: "pmOut", label: "PM Out", badge: "PM" },
+                ],
+              ].map((row, i) => (
+                <View key={i} className={`flex-row ${i > 0 ? "mt-4" : ""}`}>
+                  {row.map((f, idx) => (
+                    <View
+                      key={f.key}
+                      className={`flex-1 ${idx > 0 ? "ml-3" : ""}`}>
+                      <Text className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
+                        {f.label}
+                      </Text>
+                      <View className="mt-2 flex-row items-center rounded-xl border border-white/10 bg-[#0F1620] px-3">
+                        <TextInput
+                          value={schedule[f.key]}
+                          onChangeText={(t) =>
+                            setSchedule((prev) => ({
+                              ...prev,
+                              [f.key]: formatTimeInput(t),
+                            }))
+                          }
+                          placeholder="00:00"
+                          placeholderTextColor="#4B5563"
+                          keyboardType="number-pad"
+                          maxLength={5}
+                          className="flex-1 py-3 text-sm text-white"
+                        />
+                        <Text className="text-[10px] font-bold text-blue-400">
+                          {f.badge}
+                        </Text>
+                      </View>
+                    </View>
+                  ))}
+                </View>
+              ))}
+            </View>
+
+            {/* Footer */}
+            <View className="flex-row border-t border-white/10 px-5 py-4">
+              <Pressable
+                onPress={skipSchedule}
+                className="flex-1 items-center justify-center rounded-xl bg-white/5 py-3">
+                <Text className="text-xs font-bold text-gray-400">Skip</Text>
+              </Pressable>
+
+              <Pressable
+                onPress={confirmSchedule}
+                className="ml-2 flex-1 flex-row items-center justify-center rounded-xl bg-blue-500 py-3">
+                <FontAwesome6
+                  name="check"
+                  size={11}
+                  color="#FFFFFF"
+                  iconStyle="solid"
+                />
+                <Text className="ml-2 text-xs font-bold text-white">
+                  Save Schedule
                 </Text>
               </Pressable>
             </View>
